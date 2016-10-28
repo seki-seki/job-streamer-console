@@ -15,7 +15,8 @@
         [job-streamer.console.components.calendars :only [calendars-view]]
         [job-streamer.console.components.apps :only [apps-view]]
         [job-streamer.console.search :only [search-jobs parse-sort-order]]
-        [job-streamer.console.component-helper :only [make-click-outside-fn]]))
+        [job-streamer.console.component-helper :only [make-click-outside-fn]]
+        [job-streamer.console.routing :only[fetch-calendars]]))
 
 (def app-name "default")
 
@@ -43,11 +44,10 @@
                                                 :job/time-monitor
                                                 :job/status-notifications]))
                        {:handler (fn [_]
-                                   (when rest-jobs
-                                     (put! ch rest-jobs)))}))
-        (if rest-jobs
-          (recur)
-          (callback))))
+                                   (if rest-jobs
+                                     (put! ch rest-jobs)
+                                     (callback)))})
+          (recur))))
     (put! ch jobs)))
 
 (defn import-edn-calendars [calendars callback]
@@ -59,11 +59,10 @@
           (api/request "/calendars" :POST
                        calendar
                        {:handler (fn [_]
-                                   (when rest-calendars
-                                     (put! ch rest-calendars)))}))
-        (if rest-calendars
-          (recur)
-          (callback))))
+                                   (if rest-calendars
+                                     (put! ch rest-calendars)
+                                     (callback)))})
+          (recur))))
     (put! ch calendars)))
 
 (defn upload-dialog [el-name upload-fn callback-fn]
@@ -110,7 +109,7 @@
            {:type "button"
             :on-click (fn [e] (put! header-channel [:close-dialog true]))} "Close"]]]]]))))
 
-(defcomponent right-menu-view [app owner {:keys [header-channel jobs-channel]}]
+(defcomponent right-menu-view [app owner {:keys [header-channel jobs-channel calendars-channel]}]
   (init-state [_]
     :configure-opened? false
     :export-opened? false
@@ -233,7 +232,7 @@
               "file-calendars"
               (fn [file result callback-fn]
                 (import-edn-calendars (read-string result) callback-fn))
-              (fn [] ))
+              (fn [] (put! calendars-channel [:fetch-calendar true])))
              "Import calendars"]]]
 
           [:a.item {:on-click (fn [e]
@@ -288,6 +287,7 @@
           [:div.header.item [:a {:href "#/" } [:img.ui.image {:alt "JobStreamer" :src "img/logo.png"}]]]
           (om/build right-menu-view app {:opts {:header-channel header-channel
                                                 :jobs-channel jobs-channel
+                                                :calendars-channel calendars-channel
                                                 :react-key "menu"}})]
          [:div.main.grid.content.full.height
           (case (first (:mode app))
