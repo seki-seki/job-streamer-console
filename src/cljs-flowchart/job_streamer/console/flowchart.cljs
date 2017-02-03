@@ -4,7 +4,8 @@
             [bouncer.core :as b]
             [bouncer.validators :as v]
             [cljs.core.async :refer [put! <! chan timeout]]
-            [clojure.walk :refer [postwalk]])
+            [clojure.walk :refer [postwalk]]
+            [goog.Uri.QueryData :as query-data])
   (:import [goog Uri]))
 
 (def control-bus-url (.. js/document
@@ -12,6 +13,10 @@
                          (getAttribute "content")))
 
 (def app-name "default")
+(def test-job-name (str "test-job" (rand-int 1000)))
+(def app-state (atom
+                 {:refresh true
+                  :progress-count 0}))
 
 (def initial-diagram
   (str "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
@@ -35,6 +40,7 @@
        "</bpmn:definitions>"))
 
 (defonce message-channel (chan))
+(defonce execution-channel (chan))
 
 (defn- add-class [e class]
   (let [classes (aget e "className")
@@ -67,6 +73,89 @@
                    (remove-class m (:type msg))
                    (remove-class m "visible"))
              (recur))))
+
+(defn search-executions [job-name query cb]
+  (let [uri (.. (Uri. (str "/" app-name "/job/" job-name "/executions"))
+                (setQueryData (query-data/createFromMap (clj->js query))))]
+    (api/request (.toString uri)
+                 {:handler cb})))
+
+(defn save-test-job-control-bus [job handler]
+    (api/request (str "/" app-name "/jobs")
+                 :POST
+                 job
+                 {:handler handler}))
+
+(defn save-test-job[job-name handler]
+  (let [modeler js/window.bpmnjs]
+    (.saveXML modeler
+              #js {:format true}
+              (fn [err xml]
+                (save-test-job-control-bus
+                  {:job/bpmn-xml-notation xml
+                   :job/name job-name} handler)))))
+
+(defn execute-test []
+  (put! execution-channel :start)
+  (let [progress (.getElementById js/document "progress")]
+    (remove-class progress "hidden")
+    (remove-class progress "success")
+    (remove-class progress "error"))
+  (swap! app-state assoc :prev-execution-id (:db/id (:last-execution @app-state)))
+  (swap! app-state assoc :last-execution {})
+  (save-test-job test-job-name
+                 #(api/request (str "/" app-name "/job/" test-job-name "/executions") :POST
+                              {:test? true}
+                              {:handler
+                               (swap! app-state assoc :refresh true)
+                               :forbidden-handler (fn [response]
+                                                    (when message-channel
+                                                      (put! message-channel {:type "error" :body "You are unauthorized to execute job."})))})))
+
+(go-loop []
+         (when-let [_ (<! execution-channel)]
+           (when (or (some-> (:last-execution @app-state)
+                             (get-in [:job-execution/batch-status :db/ident])
+                             #{:batch-status/started :batch-status/starting
+                               :batch-status/undispatched :batch-status/queued
+                               :batch-status/unrestarted :batch-status/stopping :batch-status/unknown})
+                     (:refresh @app-state))
+             (search-executions test-job-name {:filter-mode :test}
+                                (fn [response]
+                                  (let [last-execution (-> response :results first)]
+                                    (if (and (:db/id last-execution) (= (:db/id last-execution) (:prev-execution-id @app-state)))
+                                      (do
+                                        (swap! app-state assoc :refresh true)
+                                        (swap! app-state update-in [:progress-count] inc))
+                                      (do
+                                        (swap! app-state assoc :last-execution last-execution)
+                                        (swap! app-state assoc :refresh false)
+                                        (if (some-> last-execution
+                                                    (get-in [:job-execution/batch-status :db/ident])
+                                                    #{:batch-status/completed :batch-status/stopped :batch-status/failed :batch-status/abandoned})
+                                          (swap! app-state assoc :progress-count 0)
+                                          (swap! app-state update-in [:progress-count] inc)))))))
+             (let [progress (.getElementById js/document "progress")
+                   progress-bar (.getElementById js/document "progress-bar")]
+               (when (:last-execution @app-state)
+                 (remove-class progress "hidden"))
+               (let [dummy-progress-percent (min (* 20 (:progress-count @app-state)) 90)
+                     display-progress-percent (if (some-> (:last-execution @app-state)
+                                                          (get-in [:job-execution/batch-status :db/ident])
+                                                          #{:batch-status/completed :batch-status/stopped :batch-status/failed :batch-status/abandoned}) 100 dummy-progress-percent)]
+                 ;change dom
+                 (add-class progress
+                            (case (get-in (:last-execution @app-state) [:job-execution/batch-status :db/ident])
+                              :batch-status/completed "success"
+                              (:batch-status/stopped :batch-status/failed :batch-status/abandoned) "error"
+                              ""))
+                 (set! (.-dataPercent progress) display-progress-percent)
+                 (set! (.-width (.-style progress-bar)) (str display-progress-percent "%"))
+                 )))
+           (<! (timeout 1000))
+           (println ":continue")
+           (put! execution-channel :continue)
+           (recur)))
 
 (defn save-job-control-bus [job job-name]
   (if-let [messages (first (b/validate job :job/name [v/required [v/matches #"^[\w\-]+$"]]))]
@@ -148,8 +237,9 @@
     (.addEventListener js/window
                        "DOMContentLoaded"
                        (fn []
-                         (let [save (.getElementById js/document "save-job")]
+                         (let [save (.getElementById js/document "save-job")
+                               test (.getElementById js/document "test")]
                            (remove-class save "disabled")
-                           (.addEventListener save "click" save-job-handler))))))
+                           (.addEventListener test "click" execute-test))))))
 
 (render)

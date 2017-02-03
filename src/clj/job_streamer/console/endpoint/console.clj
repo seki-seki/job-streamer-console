@@ -100,7 +100,25 @@
    [:body
     [:div.ui.fixed.inverted.teal.menu
       [:div.header.item [:img.ui.image {:alt "JobStreamer" :src "/img/logo.png"}]]]
+    ;HUCK: dummy obj, don't behave correctly semantic ui.
     [:div.main.grid.full.height
+     [:div.ui.grid
+      [:div.ui.row
+       [:div.ui.column
+        [:h2.ui.violet.header
+         [:div.content]]
+          [:div]]]]
+    [:div.ui.grid
+      [:h2.ui.violet.header
+         [:div.content "TEST"]]
+      [:div.row
+       [:div.left.aligned.column
+        [:i#test.play.icon]]]
+      [:div.row
+       [:div.ten.wide.column
+        [:div#progress.ui.progress.hidden
+             [:div#progress-bar.bar
+                          [:div.progress]]]]]]
      [:div.ui.grid
       [:div.ui.row
        [:div.ui.column
@@ -112,7 +130,8 @@
      [:div#js-properties-panel {:style "top: 47px;"}]
      [:ul.buttons
       [:li [:button.ui.positive.button.submit.disabled {:id "save-job" :type "button"} [:i.save.icon] "Save"]]
-      [:li [:button.ui.black.deny.button {:id "cancel" :type "button" :onClick "window.close();"} "Cancel"]]]]
+      [:li [:button.ui.black.deny.button {:id "cancel" :type "button" :onClick "window.close();"} "Cancel"]]]
+     ]
     (include-js "/js/jsr-352.min.js"
                 (str "/js/flowchart" (when-not (:dev env) ".min") ".js"))]))
 
